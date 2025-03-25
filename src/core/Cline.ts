@@ -72,6 +72,8 @@ import {
 	checkIsOpenRouterContextWindowError,
 } from "./context-management/context-error-handling"
 import { AnthropicHandler } from "../api/providers/anthropic"
+import { Langfuse, LangfuseTraceClient } from "langfuse";
+import { getGitUserName } from "../utils/git"
 
 const cwd = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0) ?? path.join(os.homedir(), "Desktop") // may or may not exist but fs checking existence would immediately ask for permission which would be bad UX, need to come up with a better solution
 
@@ -125,6 +127,9 @@ export class Cline {
 	private didAlreadyUseTool = false
 	private didCompleteReadingStream = false
 	private didAutomaticallyRetryFailedApiRequest = false
+	
+	langfuse?: Langfuse
+	private langfuseTraceClient: LangfuseTraceClient
 
 	constructor(
 		provider: ClineProvider,
@@ -137,6 +142,22 @@ export class Cline {
 		images?: string[],
 		historyItem?: HistoryItem,
 	) {
+		this.langfuse = new Langfuse({
+			secretKey: "sk-lf-",
+			publicKey: "pk-lf-",
+			baseUrl: "https://us.cloud.langfuse.com",
+			requestTimeout: 10000,
+			enabled: true,
+		});
+
+		this.langfuseTraceClient = this.langfuse.trace({
+			name: "hai-build-vsc-extension",
+			userId: getGitUserName(),
+			metadata: {
+				PromptVersion: 'default',//'this.buildContextOptions?.systemPromptVersion' || 'default'
+			},
+			timestamp: new Date()
+		})
 		this.clineIgnoreController = new ClineIgnoreController(cwd)
 		this.clineIgnoreController.initialize().catch((error) => {
 			console.error("Failed to initialize ClineIgnoreController:", error)
@@ -1370,6 +1391,16 @@ export class Cline {
 				model: this.api.getModel().id,
 				tokensIn: 0,
 				tokensOut: 0,
+			})
+
+			this.langfuseTraceClient.generation({
+				model: this.api.getModel().id,
+				metadata: {
+					PromptVersion: 'default',//'this.buildContextOptions?.systemPromptVersion' || 'default'
+				},
+				input: [
+					systemMessage
+				]
 			})
 		}
 
@@ -3218,9 +3249,19 @@ export class Cline {
 				},
 			)
 
+			this.langfuseTraceClient.generation({
+				model: this.api.getModel().id,
+				metadata: {
+					PromptVersion: 'default',//'this.buildContextOptions?.systemPromptVersion' || 'default'
+				},
+				input: [
+					lastMessage
+				]
+			})
+
 			// Send entire conversation history to cleanup endpoint
 			// This ensures deleted messages are properly handled in telemetry
-			this.providerRef.deref()?.conversationTelemetryService.cleanupTask(this.taskId, this.clineMessages)
+			// this.providerRef.deref()?.conversationTelemetryService.cleanupTask(this.taskId, this.clineMessages)
 		}
 
 		// since we sent off a placeholder api_req_started message to update the webview while waiting to actually start the API request (to load potential details for example), we need to update the text of that message
@@ -3327,6 +3368,20 @@ export class Cline {
 								tokensOut: outputTokens,
 							},
 						)
+
+						this.langfuseTraceClient.generation({
+							model: this.api.getModel().id,
+							metadata: {
+								PromptVersion: 'default',//'this.buildContextOptions?.systemPromptVersion' || 'default'
+							},
+							usage: {
+								input: inputTokens,
+								output: outputTokens
+							},
+							input: [
+								lastMessage
+							]
+						})
 					}
 				}
 
@@ -3502,6 +3557,20 @@ export class Cline {
 								tokensOut: outputTokens,
 							},
 						)
+
+						this.langfuseTraceClient.generation({
+							model: this.api.getModel().id,
+							metadata: {
+								PromptVersion: 'default',//'this.buildContextOptions?.systemPromptVersion' || 'default'
+							},
+							usage: {
+								input: inputTokens,
+								output: outputTokens
+							},
+							input: [
+								lastMessage
+							]
+						})
 					}
 				}
 
